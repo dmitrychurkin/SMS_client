@@ -7,9 +7,11 @@
  */
 
 import React, { Component } from 'react';
-import { StyleSheet, Text, ScrollView, Alert } from 'react-native';
+import { StyleSheet, Text, View, Alert, PermissionsAndroid } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
+import SmsAndroid from 'react-native-sms-android';
 import SocketIOClient from 'socket.io-client';
+import { ENDPOINT } from './constants';
 
 // const instructions = Platform.select({
 //   ios: 'Press Cmd+R to reload,\n' + 'Cmd+D or shake for dev menu',
@@ -22,123 +24,146 @@ export default class App extends Component {
 
   state = {
     socketId: null,
-    appName: DeviceInfo.getApplicationName(),
-    apiLevel: DeviceInfo.getAPILevel(),
-    batteryLevel: null,
-    brand: DeviceInfo.getBrand(),
-    buildNumber: DeviceInfo.getBuildNumber(),
-    bundleId: DeviceInfo.getBundleId(),
-    carrier: DeviceInfo.getCarrier(),
-    deviceCountry: DeviceInfo.getDeviceCountry(),
-    deviceId: DeviceInfo.getDeviceId(),
-    deviceLocale: DeviceInfo.getDeviceLocale(),
-    preferredLocales: DeviceInfo.getPreferredLocales(),
-    deviceName: DeviceInfo.getDeviceName(),
-    firstInstallTime: new Date(DeviceInfo.getFirstInstallTime()),
-    fontScale: DeviceInfo.getFontScale(),
-    freeDiskStorage: DeviceInfo.getFreeDiskStorage(),
-    ip: null,
-    installReferrer: DeviceInfo.getInstallReferrer(),
-    instanceId: DeviceInfo.getInstanceID(),
-    lastUpdateTime: new Date(DeviceInfo.getLastUpdateTime()),
-    mac: null,
-    manufacturer: DeviceInfo.getManufacturer(),
-    maxMemory: DeviceInfo.getMaxMemory(),
-    model: DeviceInfo.getModel(),
-    phoneNumber: DeviceInfo.getPhoneNumber(),
-    readableVersion: DeviceInfo.getReadableVersion(),
-    serialNumber: DeviceInfo.getSerialNumber(),
-    systemName: DeviceInfo.getSystemName(),
-    systemVersion: DeviceInfo.getSystemVersion(),
-    osBuildId: DeviceInfo.getBuildId(),
-    timezone: DeviceInfo.getTimezone(),
-    storageSize: DeviceInfo.getTotalDiskCapacity(),
-    totalMemory: DeviceInfo.getTotalMemory(),
-    uniqueId: DeviceInfo.getUniqueID(),
-    userAgent: DeviceInfo.getUserAgent(),
-    version: DeviceInfo.getVersion(),
-    is24Hour: DeviceInfo.is24Hour(),
-    airPlaneModeOn: null,
-    isCharging: null,
-    isEmulator: DeviceInfo.isEmulator(),
-    isPinOrFingerprintSet: null,
-    isTablet: DeviceInfo.isTablet(),
-    isLandscape: DeviceInfo.isLandscape(),
-    hasNotch: DeviceInfo.hasNotch(),
-    deviceType: DeviceInfo.getDeviceType(),
-    isAutoDateAndTime: null,
-    isAutoTimeZone: null,
-    supportedABIs: DeviceInfo.supportedABIs(),
-    features: null
+    deviceId: DeviceInfo.getUniqueID()
   };
 
   socket = null;
 
   componentDidMount() {
-    DeviceInfo.getBatteryLevel()
-      .then(batteryLevel => this.setState({ batteryLevel }));
-    DeviceInfo.getIPAddress()
-      .then(ip => this.setState({ ip }));
-    DeviceInfo.getMACAddress()
-      .then(mac => this.setState({ mac }));
-    DeviceInfo.isAirPlaneMode()
-      .then(airPlaneModeOn => this.setState({ airPlaneModeOn }));
-    DeviceInfo.isBatteryCharging()
-      .then(isCharging => this.setState({ isCharging }));
-    DeviceInfo.isPinOrFingerprintSet()(isPinOrFingerprintSet => this.setState({ isPinOrFingerprintSet }));
-    DeviceInfo.isAutoDateAndTime()
-      .then(isAutoDateAndTime => this.setState({ isAutoDateAndTime }));
-    DeviceInfo.isAutoTimeZone()
-      .then(isAutoTimeZone => this.setState({ isAutoTimeZone }));
-    DeviceInfo.getSystemAvailableFeatures()
-      .then(features => this.setState({ features }));
+    const socket = SocketIOClient(ENDPOINT, {
+      query: this.queryParams,
+      transports: ['websocket']
+    });
 
+    socket.on('reconnect_attempt', () => {
+      socket.io.opts.query = this.queryParams;
+    });
 
-    const socket = SocketIOClient('wss://sms-service-spdev.herokuapp.com');
+    socket.on('error', error => {
+      // console.log(error);
+      // this.showAlert(error.name, error.message);
+      socket.open();
+    });
 
-    socket.on('error', err => Alert.alert(
-      'Socket error occured',
-      JSON.stringify(err)
-    ));
+    socket.on('disconnect', () => {
+      socket.open();
+      // this.setState({ socketId: null });
+    });
+
     socket.on('connect', () => {
 
       this.setState({ socketId: socket.id });
-      Alert.alert(
+
+      this.showAlert(
         'Socket connected',
-        'Websocket been connected to sms-service-spdev.herokuapp.com'
+        `Websocket been connected to ${this.host}`
       );
 
-      socket.on('message', ({ n, m } = {}) => {
-        Alert.alert(
-          'Socket message received',
-          `Websocket received message from host sms-service-spdev.herokuapp.com:
-            n -> ${n}
-            m -> ${m}
-          `
-        );
-      });
+    });
+
+    socket.on('message', ({ n = '', m = '' } = {}) => {
+      // this.showAlert(
+      //   'Socket message received',
+      //   `Websocket received message from host ${this.host}:
+      //     n -> ${n}
+      //     m -> ${m}
+      //   `
+      // );
+
+      console.log('SMS sent');
+      this.sendSMS({ n, m });
 
     });
 
     this.socket = socket;
+
+  }
+
+  // componentWillUnmount() {
+  //   this.socket.close();
+  // }
+
+  get host() {
+    return ENDPOINT.split('://').slice(-1)[0];
+  }
+
+  get queryParams() {
+    return {
+      id: this.state.deviceId
+    };
+  }
+
+  showAlert(topic, message) {
+    Alert.alert(topic, message);
+  }
+
+  async sendSMS({ n, m }) {
+
+    const send = () => {
+      SmsAndroid.sms(
+        n,
+        m,
+        'sendDirect',
+        (err, message) => {
+          if (err) {
+            this.showAlert(
+              'Error occured while sending message',
+              `Error name => ${err.name}
+               Error message => ${err.message}
+              `
+            );
+          } else {
+            this.showAlert(
+              'Result From Callback',
+              `Message => ${message}`
+            );
+          }
+        }
+      );
+    };
+
+    try {
+
+      const canSendSMS = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.SEND_SMS);
+      if (canSendSMS) {
+        return send();
+      }
+
+      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.SEND_SMS);
+      if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+        return send();
+      }
+
+      this.showAlert(
+        'Result from request permission',
+        'Permissions to send SMS been denied'
+      );
+
+    } catch (err) {
+
+      this.showAlert(
+        'Error occured with permissions',
+        `Error name => ${err.name}
+         Error message => ${err.message}`
+      );
+
+    }
+
   }
 
   render() {
+    const { socketId, deviceId } = this.state;
     return (
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container}>
-        <Text style={styles.welcome}>Device info:</Text>
-        {
-          Object.entries(this.state).map(([key, value]) => (
-            <Text key={key} style={styles.instructions}>{key} -> {JSON.stringify(value)}</Text>
-          ))
-        }
-      </ScrollView>
+      <View style={styles.container}>
+        <Text style={styles.welcome}>{socketId ? `Device ${deviceId} connected to socket with ID ${socketId}` : `Not connected to socket`}</Text>
+      </View>
     );
   }
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#F5FCFF',
